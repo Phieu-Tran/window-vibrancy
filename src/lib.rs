@@ -58,7 +58,7 @@ pub enum CornerPreference {
 fn get_hwnd(window: &impl raw_window_handle::HasWindowHandle) -> Result<isize, Error> {
     match window.window_handle()?.as_raw() {
         #[cfg(target_os = "windows")]
-        raw_window_handle::RawWindowHandle::Win32(handle) => Ok(handle.hwnd.get() as _),
+        raw_window_handle::RawWindowHandle::Win32(handle) => Ok(handle.hwnd.get() as isize),
         _ => Err(Error::UnsupportedPlatform(
             "Only Windows is supported.",
         )),
