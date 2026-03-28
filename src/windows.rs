@@ -1,4 +1,4 @@
-// Copyright 2019-2022 Tauri Programme within The Commons Conservancy
+// Copyright 2024 Phieu-Tran
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
@@ -11,7 +11,7 @@ use std::ffi::c_void;
 use windows_sys::core::BOOL;
 pub use windows_sys::Win32::{Foundation::*, Graphics::Dwm::*, System::LibraryLoader::*};
 
-use crate::{Color, Error};
+use crate::{Color, CornerPreference, Effect, Error};
 
 pub fn apply_blur(hwnd: HWND, color: Option<Color>) -> Result<(), Error> {
     if is_win7() {
@@ -30,8 +30,8 @@ pub fn apply_blur(hwnd: HWND, color: Option<Color>) -> Result<(), Error> {
         }
     } else {
         return Err(Error::UnsupportedPlatformVersion(
-      "\"apply_blur()\" is only available on Windows 7, Windows 10 v1809 or newer and Windows 11.",
-    ));
+            "\"apply_blur()\" is only available on Windows 7, Windows 10 v1809 or newer.",
+        ));
     }
     Ok(())
 }
@@ -53,8 +53,8 @@ pub fn clear_blur(hwnd: HWND) -> Result<(), Error> {
         }
     } else {
         return Err(Error::UnsupportedPlatformVersion(
-      "\"clear_blur()\" is only available on Windows 7, Windows 10 v1809 or newer and Windows 11.",
-    ));
+            "\"clear_blur()\" is only available on Windows 7, Windows 10 v1809 or newer.",
+        ));
     }
     Ok(())
 }
@@ -79,7 +79,7 @@ pub fn apply_acrylic(hwnd: HWND, color: Option<Color>) -> Result<(), Error> {
         }
     } else {
         return Err(Error::UnsupportedPlatformVersion(
-            "\"apply_acrylic()\" is only available on Windows 10 v1809 or newer and Windows 11.",
+            "\"apply_acrylic()\" is only available on Windows 10 v1809 or newer.",
         ));
     }
     Ok(())
@@ -101,7 +101,7 @@ pub fn clear_acrylic(hwnd: HWND) -> Result<(), Error> {
         }
     } else {
         return Err(Error::UnsupportedPlatformVersion(
-            "\"clear_acrylic()\" is only available on Windows 10 v1809 or newer and Windows 11.",
+            "\"clear_acrylic()\" is only available on Windows 10 v1809 or newer.",
         ));
     }
     Ok(())
@@ -192,7 +192,7 @@ pub fn apply_tabbed(hwnd: HWND, dark: Option<bool>) -> Result<(), Error> {
         }
     } else {
         return Err(Error::UnsupportedPlatformVersion(
-            "\"apply_tabbed()\" is only available on Windows 11.",
+            "\"apply_tabbed()\" is only available on Windows 11 build 22523+.",
         ));
     }
     Ok(())
@@ -210,11 +210,105 @@ pub fn clear_tabbed(hwnd: HWND) -> Result<(), Error> {
         }
     } else {
         return Err(Error::UnsupportedPlatformVersion(
-            "\"clear_tabbed()\" is only available on Windows 11.",
+            "\"clear_tabbed()\" is only available on Windows 11 build 22523+.",
         ));
     }
     Ok(())
 }
+
+// ── Rounded corners ─────────────────────────────────────────────────
+
+pub fn apply_rounded_corners(hwnd: HWND, preference: CornerPreference) -> Result<(), Error> {
+    if !is_undocumented_mica_supported() {
+        return Err(Error::UnsupportedPlatformVersion(
+            "\"apply_rounded_corners()\" is only available on Windows 11.",
+        ));
+    }
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE as _,
+            &(preference as u32) as *const _ as _,
+            4,
+        );
+    }
+    Ok(())
+}
+
+// ── Smart helpers ───────────────────────────────────────────────────
+
+pub fn apply_best_effect(hwnd: HWND, dark: Option<bool>) -> Result<Effect, Error> {
+    if is_backdroptype_supported() {
+        apply_tabbed(hwnd, dark)?;
+        Ok(Effect::Tabbed)
+    } else if is_undocumented_mica_supported() {
+        apply_mica(hwnd, dark)?;
+        Ok(Effect::Mica)
+    } else if is_swca_supported() {
+        apply_acrylic(hwnd, None)?;
+        Ok(Effect::Acrylic)
+    } else if is_win7() {
+        apply_blur(hwnd, None)?;
+        Ok(Effect::Blur)
+    } else {
+        Ok(Effect::Clear)
+    }
+}
+
+pub fn clear_all_effects(hwnd: HWND) -> Result<(), Error> {
+    // Reset dark mode attribute
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE as _,
+            &(false as u32) as *const _ as _,
+            4,
+        );
+    }
+
+    // Clear backdrop type (Mica / Tabbed / Acrylic on Win11 22523+)
+    if is_backdroptype_supported() {
+        unsafe {
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_SYSTEMBACKDROP_TYPE as _,
+                &DWM_SYSTEMBACKDROP_TYPE::DWMSBT_DISABLE as *const _ as _,
+                4,
+            );
+        }
+    }
+
+    // Clear undocumented Mica (Win11 22000-22522)
+    if is_undocumented_mica_supported() {
+        unsafe {
+            DwmSetWindowAttribute(hwnd, DWMWA_MICA_EFFECT as _, &0 as *const _ as _, 4);
+        }
+    }
+
+    // Clear SWCA-based effects (Blur / Acrylic on Win10)
+    if is_swca_supported() {
+        unsafe {
+            SetWindowCompositionAttribute(hwnd, ACCENT_STATE::ACCENT_DISABLED, None);
+        }
+    }
+
+    // Clear Win7 blur
+    if is_win7() {
+        let bb = DWM_BLURBEHIND {
+            dwFlags: DWM_BB_ENABLE,
+            fEnable: false.into(),
+            hRgnBlur: std::ptr::null_mut(),
+            fTransitionOnMaximized: 0,
+        };
+        unsafe {
+            let _ = DwmEnableBlurBehindWindow(hwnd, &bb);
+        }
+    }
+
+    Ok(())
+}
+
+// ── Internal helpers ────────────────────────────────────────────────
 
 fn get_function_impl(library: &str, function: &str) -> Option<FARPROC> {
     assert_eq!(library.chars().last(), Some('\0'));
@@ -274,7 +368,6 @@ unsafe fn SetWindowCompositionAttribute(
 
         let is_acrylic = accent_state == ACCENT_STATE::ACCENT_ENABLE_ACRYLICBLURBEHIND;
         if is_acrylic && color.3 == 0 {
-            // acrylic doesn't like to have 0 alpha
             color.3 = 1;
         }
 
@@ -300,6 +393,7 @@ unsafe fn SetWindowCompositionAttribute(
 
 const DWMWA_MICA_EFFECT: DWMWINDOWATTRIBUTE = 1029;
 const DWMWA_SYSTEMBACKDROP_TYPE: DWMWINDOWATTRIBUTE = 38;
+const DWMWA_WINDOW_CORNER_PREFERENCE: DWMWINDOWATTRIBUTE = 33;
 
 #[allow(unused)]
 #[repr(C)]

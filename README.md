@@ -1,54 +1,98 @@
 # window-vibrancy
 
-[![](https://img.shields.io/crates/v/window-vibrancy)](https://crates.io/crates/window-vibrancy) [![](https://img.shields.io/docsrs/window-vibrancy)](https://docs.rs/window-vibrancy/) ![](https://img.shields.io/crates/l/window-vibrancy)
-[![Chat Server](https://img.shields.io/badge/chat-on%20discord-7289da.svg)](https://discord.gg/SpmNs4S)
+[![License](https://img.shields.io/badge/License-Apache%202.0%20%2F%20MIT-blue.svg)](LICENSE)
 
-Make your windows vibrant.
+Windows vibrancy effects library — Mica, Mica Alt, Acrylic, Blur, rounded corners, and smart OS-version fallback.
 
-> [!Tip]
-> If you're using `tauri@v1`, you need to use version `0.4` of this crate.
+Built for [ClipPaste](https://github.com/Phieu-Tran/ClipPaste). Windows-only fork of [tauri-apps/window-vibrancy](https://github.com/tauri-apps/window-vibrancy).
 
-## Platform-specific
+## Features
 
-- **Linux**: Unsupported, Blur and any vibrancy effects are controlled by the compositor installed on the end-user system.
+| Function | Windows Version | Notes |
+|:---------|:---------------:|:------|
+| `apply_blur` / `clear_blur` | 7, 10 v1809+, 11 | May lag on Win11 22621+ during resize |
+| `apply_acrylic` / `clear_acrylic` | 10 v1809+, 11 | May lag on Win10 v1903+ and Win11 22000 |
+| `apply_mica` / `clear_mica` | 11 | Falls back to Acrylic on Win10 |
+| `apply_tabbed` / `clear_tabbed` | 11 build 22523+ | Falls back to Mica, then Acrylic |
+| `apply_rounded_corners` | 11 | Native DWM rounded corners |
+| `apply_best_effect` | 7+ | Auto-detects OS, applies best effect |
+| `switch_effect` | 7+ | Flicker-free effect switching |
+| `clear_all_effects` | 7+ | Clears any active effect |
 
-## Example
+## Usage
 
-```rs
-use window_vibrancy::{apply_blur, apply_vibrancy, NSVisualEffectMaterial};
+```rust
+use window_vibrancy::{apply_mica, apply_rounded_corners, CornerPreference};
 
-#[cfg(target_os = "macos")]
-apply_vibrancy(&window, NSVisualEffectMaterial::HudWindow, None, None).expect("Unsupported platform! 'apply_vibrancy' is only supported on macOS");
+// Apply Mica with dark mode (falls back to Acrylic on Win10)
+apply_mica(&window, Some(true)).unwrap();
 
-#[cfg(target_os = "windows")]
-apply_blur(&window, Some((18, 18, 18, 125))).expect("Unsupported platform! 'apply_blur' is only supported on Windows");
+// Native rounded corners on Win11
+apply_rounded_corners(&window, CornerPreference::Round).unwrap();
 ```
 
-## Tauri
+### Smart effect switching (no flicker)
 
-if you are using tauri, don't forget to:
+```rust
+use window_vibrancy::{switch_effect, Effect};
 
-* set `html, body { background: transparent }` see [index.html#L12](https://github.com/tauri-apps/window-vibrancy/blob/dev/examples/tauri/public/index.html#L12)
-* set `"windows": [ { "transparent": true } ]` see [tauri.conf.json#L57](https://github.com/tauri-apps/window-vibrancy/blob/dev/examples/tauri/src-tauri/tauri.conf.json#L57)
-* on **macos** set `"macOSPrivateApi": true` see [tauri.conf.json#L49](https://github.com/tauri-apps/window-vibrancy/blob/dev/examples/tauri/src-tauri/tauri.conf.json#L49)
+// Switch from any effect to Mica Alt — clears old effect first
+switch_effect(&window, Effect::Tabbed, Some(true), None).unwrap();
+```
 
-For a more complete example of usage with [tauri](https://tauri.app/), see [`examples/tauri`](https://github.com/tauri-apps/window-vibrancy/tree/dev/examples/tauri).
+### Auto-detect best effect
 
-## Available functions
+```rust
+use window_vibrancy::apply_best_effect;
 
-| Function                          |     Supported platforms      | Notes                                                                                              |
-|:----------------------------------|:----------------------------:|:---------------------------------------------------------------------------------------------------|
-| `apply_blur`&`clear_blur`         | Windows  7/10/11 (22H1 only) | Bad performance when resizing/dragging the window on Windows 11 build 22621+.                      |
-| `apply_acrylic`&`clear_acrylic`   |        Windows 10/11         | Bad performance when resizing/dragging the window on Windows 10 v1903+ and Windows 11 build 22000. |
-| `apply_mica`&`clear_mica`         |          Windows 11          |                                                                                                    |
-| `apply_vibrancy`&`clear_vibrancy` |    macOS 10.10 and newer     |                                                                                                    |
+let applied = apply_best_effect(&window, Some(true)).unwrap();
+println!("Applied: {:?}", applied); // e.g. Effect::Tabbed on Win11
+```
 
-## Screenshots
+## Tauri Integration
 
-<p align="center">
+```rust
+// In your Tauri setup:
+use window_vibrancy::{apply_mica, apply_rounded_corners, CornerPreference};
 
-| apply_blur | apply_acrylic | apply_mica | apply_vibrancy |
-| :---:      | :---:         | :---:      | :---:          |
-| ![apply_blur screenshot](./screenshots/apply_blur.png) | ![apply_blur screenshot](./screenshots/apply_acrylic.png) | ![apply_mica screenshot](./screenshots/apply_mica.png) | ![apply_vibrancy screenshot](./screenshots/apply_vibrancy.png) |
+let window = app.get_webview_window("main").unwrap();
+apply_mica(&window, Some(true)).unwrap();
+apply_rounded_corners(&window, CornerPreference::Round).unwrap();
+```
 
-</p>
+Don't forget to set in your frontend:
+```css
+html, body { background: transparent; }
+```
+
+And in `tauri.conf.json`:
+```json
+{ "windows": [{ "transparent": true }] }
+```
+
+## Types
+
+### `Effect`
+```rust
+pub enum Effect {
+    Blur,     // Windows 7 / 10 v1809+
+    Acrylic,  // Windows 10 v1809+
+    Mica,     // Windows 11
+    Tabbed,   // Windows 11 build 22523+ (Mica Alt)
+    Clear,    // No effect
+}
+```
+
+### `CornerPreference`
+```rust
+pub enum CornerPreference {
+    Default = 0,    // System default
+    Square = 1,     // No rounding
+    Round = 2,      // Standard rounded corners
+    RoundSmall = 3, // Small rounded corners
+}
+```
+
+## License
+
+Apache-2.0 OR MIT
