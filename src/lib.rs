@@ -58,10 +58,8 @@ pub enum CornerPreference {
 fn get_hwnd(window: &impl raw_window_handle::HasWindowHandle) -> Result<isize, Error> {
     match window.window_handle()?.as_raw() {
         #[cfg(target_os = "windows")]
-        raw_window_handle::RawWindowHandle::Win32(handle) => Ok(handle.hwnd.get() as isize),
-        _ => Err(Error::UnsupportedPlatform(
-            "Only Windows is supported.",
-        )),
+        raw_window_handle::RawWindowHandle::Win32(handle) => Ok(handle.hwnd.get()),
+        _ => Err(Error::UnsupportedPlatform("Only Windows is supported.")),
     }
 }
 
@@ -168,6 +166,19 @@ pub fn apply_best_effect(
     windows::apply_best_effect(hwnd, dark)
 }
 
+/// Returns the best effect supported by the current OS without applying it.
+pub fn best_supported_effect() -> Effect {
+    windows::best_supported_effect()
+}
+
+/// Returns whether an effect is directly supported by the current OS.
+///
+/// This reports direct support only: for example, [`Effect::Mica`] returns `false`
+/// on Windows 10 even though [`apply_mica`] can fall back to Acrylic.
+pub fn is_effect_supported(effect: Effect) -> bool {
+    windows::is_effect_supported(effect)
+}
+
 /// Clears any vibrancy effect from the window.
 pub fn clear_all_effects(window: impl raw_window_handle::HasWindowHandle) -> Result<(), Error> {
     let hwnd = get_hwnd(&window)?;
@@ -190,23 +201,17 @@ pub fn switch_effect(
     match effect {
         Effect::Blur => windows::apply_blur(hwnd, color),
         Effect::Acrylic => windows::apply_acrylic(hwnd, color),
-        Effect::Mica => {
-            match windows::apply_mica(hwnd, dark) {
+        Effect::Mica => match windows::apply_mica(hwnd, dark) {
+            Err(Error::UnsupportedPlatformVersion(_)) => windows::apply_acrylic(hwnd, color),
+            other => other,
+        },
+        Effect::Tabbed => match windows::apply_tabbed(hwnd, dark) {
+            Err(Error::UnsupportedPlatformVersion(_)) => match windows::apply_mica(hwnd, dark) {
                 Err(Error::UnsupportedPlatformVersion(_)) => windows::apply_acrylic(hwnd, color),
                 other => other,
-            }
-        }
-        Effect::Tabbed => {
-            match windows::apply_tabbed(hwnd, dark) {
-                Err(Error::UnsupportedPlatformVersion(_)) => {
-                    match windows::apply_mica(hwnd, dark) {
-                        Err(Error::UnsupportedPlatformVersion(_)) => windows::apply_acrylic(hwnd, color),
-                        other => other,
-                    }
-                }
-                other => other,
-            }
-        }
+            },
+            other => other,
+        },
         Effect::Clear => Ok(()), // Already cleared above
     }
 }
@@ -217,6 +222,8 @@ pub fn switch_effect(
 pub enum Error {
     UnsupportedPlatform(&'static str),
     UnsupportedPlatformVersion(&'static str),
+    WindowsApi { function: &'static str, code: i32 },
+    MissingFunction(&'static str),
     NoWindowHandle(raw_window_handle::HandleError),
 }
 
@@ -226,6 +233,10 @@ impl std::fmt::Display for Error {
             Error::UnsupportedPlatform(e) | Error::UnsupportedPlatformVersion(e) => {
                 write!(f, "{}", e)
             }
+            Error::WindowsApi { function, code } => {
+                write!(f, "{} failed with code {:#x}", function, code)
+            }
+            Error::MissingFunction(function) => write!(f, "{} is not available", function),
             Error::NoWindowHandle(e) => write!(f, "{}", e),
         }
     }
